@@ -1,0 +1,25 @@
+name: Magento Extension Quality
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        required: false
+        type: string
+        default: "8.3"
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer
+          coverage: none
+
+      - run: composer validate
