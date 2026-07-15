@@ -8,6 +8,10 @@ if (!function_exists('buildReviewMarkdown')) {
     throw new RuntimeException('buildReviewMarkdown() is not available yet.');
 }
 
+if (!function_exists('generateReviewText')) {
+    throw new RuntimeException('generateReviewText() is not available yet.');
+}
+
 $review = buildReviewMarkdown(
     'Add a new Magento module feature',
     'This change adds a new module and updates DI configuration.',
@@ -30,6 +34,10 @@ if (!str_contains($review, 'XML configuration changes are present')) {
 
 if (!str_contains($review, 'di.xml')) {
     throw new RuntimeException('The review output should mention XML configuration changes.');
+}
+
+if (!is_string(generateReviewText('Title', 'Description', 'app/code/Module/etc/di.xml', 'diff', 'Prompt'))) {
+    throw new RuntimeException('generateReviewText() should return a string.');
 }
 
 echo "Review test passed\n";

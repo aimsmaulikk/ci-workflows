@@ -83,6 +83,71 @@ EOT;
     return $review;
 }
 
+function generateReviewText(string $prTitle, string $prDescription, string $changedFiles, string $gitDiff, string $prompt): string
+{
+    $apiKey = getenv('OPENAI_API_KEY') ?: getenv('AZURE_OPENAI_API_KEY') ?: '';
+    $apiBase = getenv('OPENAI_API_BASE') ?: getenv('AZURE_OPENAI_API_BASE') ?: 'https://api.openai.com/v1';
+    $model = getenv('OPENAI_MODEL') ?: getenv('AZURE_OPENAI_MODEL') ?: 'gpt-4o-mini';
+    $provider = getenv('AI_PROVIDER') ?: (str_contains($apiBase, 'openai.azure.com') ? 'azure' : 'openai');
+
+    if ($apiKey === '') {
+        return buildReviewMarkdown($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
+    }
+
+    $requestBody = [
+        'model' => $model,
+        'messages' => [
+            [
+                'role' => 'system',
+                'content' => $prompt,
+            ],
+            [
+                'role' => 'user',
+                'content' => sprintf(
+                    "PR Title: %s\n\nPR Description: %s\n\nChanged Files:\n%s\n\nDiff:\n%s",
+                    $prTitle,
+                    $prDescription,
+                    $changedFiles,
+                    $gitDiff
+                ),
+            ],
+        ],
+        'temperature' => 0.2,
+    ];
+
+    $headers = [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $apiKey,
+    ];
+
+    $endpoint = $provider === 'azure'
+        ? rtrim($apiBase, '/') . '/openai/deployments/' . $model . '/chat/completions?api-version=2024-02-01'
+        : rtrim($apiBase, '/') . '/chat/completions';
+
+    $payload = json_encode($requestBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => $headers,
+            'content' => $payload,
+            'timeout' => 30,
+        ],
+    ]);
+
+    $response = @file_get_contents($endpoint, false, $context);
+    if ($response === false) {
+        return buildReviewMarkdown($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
+    }
+
+    $data = json_decode($response, true);
+    if (!is_array($data) || !isset($data['choices'][0]['message']['content'])) {
+        return buildReviewMarkdown($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
+    }
+
+    return trim((string) $data['choices'][0]['message']['content']);
+}
+
 if (PHP_SAPI === 'cli') {
     $prompt = file_get_contents(__DIR__ . '/prompts/magento-review.md');
     $prTitle = getenv('PR_TITLE') ?: 'No PR title provided';
@@ -90,5 +155,5 @@ if (PHP_SAPI === 'cli') {
     $changedFiles = getenv('CHANGED_FILES') ?: 'No changed files captured';
     $gitDiff = getenv('GIT_DIFF') ?: 'No git diff captured';
 
-    echo buildReviewMarkdown($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
+    echo generateReviewText($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
 }

@@ -60,9 +60,15 @@ on:
         required: false
         type: boolean
         default: false
+      enable-pr-comments:
+        description: Post quality findings and AI review output as a PR comment
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   validate:
@@ -262,6 +268,8 @@ jobs:
     needs: validate
     if: ${{ inputs.enable-ai-review }}
     runs-on: ubuntu-latest
+    outputs:
+      review_markdown: ${{ steps.render-review.outputs.value }}
 
     steps:
       - name: Checkout extension repository
@@ -283,6 +291,25 @@ jobs:
           php-version: ${{ inputs.php-version }}
           tools: composer
           coverage: none
+
+      - name: Configure AI provider environment
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          OPENAI_API_BASE: ${{ vars.OPENAI_API_BASE }}
+          AZURE_OPENAI_API_BASE: ${{ vars.AZURE_OPENAI_API_BASE }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL }}
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+        run: |
+          echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> "$GITHUB_ENV"
+          echo "AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}" >> "$GITHUB_ENV"
+          echo "OPENAI_API_BASE=${OPENAI_API_BASE}" >> "$GITHUB_ENV"
+          echo "AZURE_OPENAI_API_BASE=${AZURE_OPENAI_API_BASE}" >> "$GITHUB_ENV"
+          echo "OPENAI_MODEL=${OPENAI_MODEL}" >> "$GITHUB_ENV"
+          echo "AZURE_OPENAI_MODEL=${AZURE_OPENAI_MODEL}" >> "$GITHUB_ENV"
+          echo "AI_PROVIDER=${AI_PROVIDER}" >> "$GITHUB_ENV"
 
       - name: Prepare review context
         shell: bash
@@ -315,14 +342,21 @@ jobs:
           cat git-diff.txt >> "$GITHUB_ENV"
           echo "EOF" >> "$GITHUB_ENV"
 
-      - name: Print AI review
+      - name: Generate AI review markdown
+        id: render-review
         shell: bash
         working-directory: extension-code
-        run: php ../ci-workflows/ai/review.php
+        run: |
+          php ../ci-workflows/ai/review.php > ai-review.md
+          echo "Review markdown generated."
+          cat ai-review.md
+          echo "value<<EOF" >> "$GITHUB_OUTPUT"
+          cat ai-review.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
   comment-results:
     name: Comment Results
-    needs: [validate, phpcs]
+    needs: [validate, phpcs, ai-review]
     if: ${{ inputs.enable-pr-comments && github.event_name == 'pull_request' && always() && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
 
@@ -332,10 +366,12 @@ jobs:
         env:
           LINT_FAILURE: ${{ needs.phpcs.outputs.lint_failure }}
           PHPCS_FAILURE: ${{ needs.phpcs.outputs.phpcs_failure }}
+          AI_REVIEW_MARKDOWN: ${{ needs.ai-review.outputs.review_markdown }}
         with:
           script: |
             const body = [];
             const failures = [];
+            const sections = [];
 
             if (process.env.LINT_FAILURE) {
               failures.push('### PHP Lint\n```\n' + process.env.LINT_FAILURE + '\n```');
@@ -345,18 +381,25 @@ jobs:
               failures.push('### PHPCS\n```\n' + process.env.PHPCS_FAILURE + '\n```');
             }
 
-            if (failures.length === 0) {
+            if (failures.length > 0) {
+              body.push('## CI Quality Report');
+              body.push('');
+              body.push('The following issues were detected by the reusable quality workflow:');
+              body.push('');
+              body.push(...failures);
+              sections.push(body.join('\n'));
+            }
+
+            if (process.env.AI_REVIEW_MARKDOWN) {
+              sections.push('## AI Review\n\n' + process.env.AI_REVIEW_MARKDOWN);
+            }
+
+            if (sections.length === 0) {
               return;
             }
 
-            body.push('## CI Quality Report');
-            body.push('');
-            body.push('The following issues were detected by the reusable quality workflow:');
-            body.push('');
-            body.push(...failures);
-
             const marker = '<!-- ci-quality-report -->';
-            const commentBody = marker + '\n' + body.join('\n');
+            const commentBody = marker + '\n' + sections.join('\n\n');
 
             try {
               const { data: comments } = await github.rest.issues.listComments({

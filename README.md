@@ -43,6 +43,15 @@ jobs:
 
 Keeping the shared logic in a single repository avoids repeating workflow YAML in every extension project. The shared rulesets, PHPStan configuration, and QA tool versions stay consistent while each extension repository only needs a lightweight entrypoint.
 
+## AI review configuration
+
+For this company-owned setup, the AI review provider is configured directly in this repository using GitHub Actions secrets and variables:
+
+- Repository secrets: `OPENAI_API_KEY` or `AZURE_OPENAI_API_KEY`
+- Repository variables: `OPENAI_API_BASE`, `AZURE_OPENAI_API_BASE`, `OPENAI_MODEL`, `AZURE_OPENAI_MODEL`, and `AI_PROVIDER`
+
+The workflow reads these values internally, so extension repositories do not need to manage any AI configuration themselves.
+
 ## Migration-friendly usage
 
 When you move this platform to another GitHub repository later, you only need to change the caller workflow in each extension repository to point at the new central repo. The shared reusable workflow will pick up the repository and ref from the caller via the `ci-workflows-repository` and `ci-workflows-ref` inputs.
