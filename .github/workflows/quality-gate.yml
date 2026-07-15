@@ -204,9 +204,10 @@ jobs:
         working-directory: extension-code
         run: |
           if [ "${{ steps.lint-php.outcome }}" = "failure" ]; then
-            echo "value<<EOF" >> "$GITHUB_OUTPUT"
+            delim="LINT_OUTPUT_$(date +%s)_$RANDOM"
+            printf 'value<<%s\n' "$delim" >> "$GITHUB_OUTPUT"
             cat php-lint-output.txt >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$delim" >> "$GITHUB_OUTPUT"
           else
             echo "value=" >> "$GITHUB_OUTPUT"
           fi
@@ -241,9 +242,10 @@ jobs:
         working-directory: extension-code
         run: |
           if [ "${{ steps.phpcs.outcome }}" = "failure" ]; then
-            echo "value<<EOF" >> "$GITHUB_OUTPUT"
+            delim="PHPCS_OUTPUT_$(date +%s)_$RANDOM"
+            printf 'value<<%s\n' "$delim" >> "$GITHUB_OUTPUT"
             cat phpcs-output.txt >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$delim" >> "$GITHUB_OUTPUT"
           else
             echo "value=" >> "$GITHUB_OUTPUT"
           fi
@@ -350,9 +352,10 @@ jobs:
           php ../ci-workflows/ai/review.php > ai-review.md
           echo "Review markdown generated."
           cat ai-review.md
-          echo "value<<EOF" >> "$GITHUB_OUTPUT"
+          delim="REVIEW_OUTPUT_$(date +%s)_$RANDOM"
+          printf 'value<<%s\n' "$delim" >> "$GITHUB_OUTPUT"
           cat ai-review.md >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$delim" >> "$GITHUB_OUTPUT"
 
   comment-results:
     name: Comment Results
