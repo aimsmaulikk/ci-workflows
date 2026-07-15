@@ -22,4 +22,12 @@ jobs:
           tools: composer
           coverage: none
 
-      - run: composer validate
+      - name: Validate composer.json
+        run: composer validate
+
+      - name: Verify Reusable Workflow
+        run: |
+          echo "================================="
+          echo "RUNNING FROM CI-WORKFLOWS REPOSITORY"
+          echo "Workflow Version: v0.1.0"
+          echo "================================="
