@@ -24,10 +24,10 @@ on:
         type: boolean
         default: false
       ci-workflows-repository:
-        description: Repository that hosts the shared CI config files
+        description: Repository that hosts the shared CI config files. Provide this from the caller workflow when using a different central repo.
         required: false
         type: string
-        default: "aimsinfosoft/ci-workflows"
+        default: ""
       ci-workflows-ref:
         description: Ref to use when checking out the shared CI config repository
         required: false
@@ -270,7 +270,7 @@ jobs:
       - name: Checkout shared CI configuration
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.ci-workflows-repository }}
+          repository: ${{ inputs.ci-workflows-repository != '' && inputs.ci-workflows-repository || github.repository }}
           ref: ${{ inputs.ci-workflows-ref }}
           path: ci-workflows
 
