@@ -242,6 +242,11 @@ jobs:
             echo "value=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Fail job for lint or PHPCS issues
+        if: ${{ steps.capture-lint.outputs.value != '' || steps.capture-phpcs.outputs.value != '' }}
+        shell: bash
+        run: exit 1
+
   phpstan:
     name: PHPStan
     needs: validate
@@ -354,6 +359,11 @@ jobs:
           else
             echo "value=" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Fail job for PHPStan issues
+        if: ${{ steps.capture-phpstan.outputs.value != '' }}
+        shell: bash
+        run: exit 1
 
   ai-review:
     name: AI Review
