@@ -154,6 +154,29 @@ jobs:
           printf '%s\n' "${php_files[@]}" > changed-php-files.txt
           echo "php_files_path=changed-php-files.txt" >> "$GITHUB_OUTPUT"
 
+      - name: Lint changed PHP files
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ ! -f changed-php-files.txt ]; then
+            echo "No changed PHP files detected; skipping PHP lint."
+            exit 0
+          fi
+
+          mapfile -t files < changed-php-files.txt
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No changed PHP files detected; skipping PHP lint."
+            exit 0
+          fi
+
+          for file in "${files[@]}"; do
+            if [ -f "$file" ]; then
+              php -l "$file"
+            else
+              echo "Skipping missing file: $file"
+            fi
+          done
+
       - name: Run PHPCS on changed PHP files
         shell: bash
         working-directory: extension-code
