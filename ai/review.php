@@ -91,8 +91,11 @@ function generateReviewText(string $prTitle, string $prDescription, string $chan
     $provider = getenv('AI_PROVIDER') ?: (str_contains($apiBase, 'openai.azure.com') ? 'azure' : 'openai');
 
     if ($apiKey === '') {
+        fwrite(STDERR, "AI review: no API key found, using local fallback review.\n");
         return buildReviewMarkdown($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
     }
+
+    fwrite(STDERR, "AI review: calling provider '{$provider}' using model '{$model}' at '{$endpoint}'.\n");
 
     $requestBody = [
         'model' => $model,
@@ -137,14 +140,19 @@ function generateReviewText(string $prTitle, string $prDescription, string $chan
 
     $response = @file_get_contents($endpoint, false, $context);
     if ($response === false) {
+        fwrite(STDERR, "AI review: provider call failed, using local fallback review.\n");
         return buildReviewMarkdown($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
     }
+
+    fwrite(STDERR, "AI review: provider returned a response.\n");
 
     $data = json_decode($response, true);
     if (!is_array($data) || !isset($data['choices'][0]['message']['content'])) {
+        fwrite(STDERR, "AI review: provider response did not contain review content, using local fallback review.\n");
         return buildReviewMarkdown($prTitle, $prDescription, $changedFiles, $gitDiff, $prompt);
     }
 
+    fwrite(STDERR, "AI review: using provider-generated review content.\n");
     return trim((string) $data['choices'][0]['message']['content']);
 }
 
