@@ -245,7 +245,17 @@ jobs:
       - name: Fail job for lint or PHPCS issues
         if: ${{ steps.capture-lint.outputs.value != '' || steps.capture-phpcs.outputs.value != '' }}
         shell: bash
-        run: exit 1
+        run: |
+          echo "Quality checks failed. See the output above for details."
+          if [ -n "${{ steps.capture-lint.outputs.value }}" ]; then
+            echo "--- PHP Lint ---"
+            echo "${{ steps.capture-lint.outputs.value }}"
+          fi
+          if [ -n "${{ steps.capture-phpcs.outputs.value }}" ]; then
+            echo "--- PHPCS ---"
+            echo "${{ steps.capture-phpcs.outputs.value }}"
+          fi
+          exit 1
 
   ai-review:
     name: AI Review
