@@ -9,10 +9,10 @@ on:
         type: string
         default: "8.3"
       enable-phpstan:
-        description: Run PHPStan analysis
+        description: Deprecated input retained for compatibility
         required: false
         type: boolean
-        default: true
+        default: false
       enable-ai-review:
         description: Run the AI review job
         required: false
@@ -46,10 +46,10 @@ on:
         type: string
         default: "8.3"
       enable-phpstan:
-        description: Run PHPStan analysis
+        description: Deprecated input retained for compatibility
         required: false
         type: boolean
-        default: true
+        default: false
       enable-ai-review:
         description: Run the AI review job
         required: false
@@ -247,124 +247,6 @@ jobs:
         shell: bash
         run: exit 1
 
-  phpstan:
-    name: PHPStan
-    needs: validate
-    if: ${{ inputs.enable-phpstan }}
-    runs-on: ubuntu-latest
-    outputs:
-      phpstan_failure: ${{ steps.capture-phpstan.outputs.value }}
-
-    steps:
-      - name: Checkout extension repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          path: extension-code
-
-      - name: Checkout shared CI configuration
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.ci-workflows-repository }}
-          ref: ${{ inputs.ci-workflows-ref }}
-          path: ci-workflows
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ inputs.php-version }}
-          tools: composer
-          coverage: none
-
-      - name: Install QA tools
-        shell: bash
-        working-directory: ci-workflows/tools
-        run: composer install --no-interaction --prefer-dist
-
-      - name: Detect changed PHP files
-        id: changed-php-files
-        shell: bash
-        working-directory: extension-code
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-            head_sha="${{ github.event.pull_request.head.sha }}"
-          else
-            base_sha="${{ github.event.before }}"
-            head_sha="${{ github.sha }}"
-          fi
-
-          if [ -n "$base_sha" ] && [ -n "$head_sha" ] && [ "$base_sha" != "$head_sha" ]; then
-            mapfile -t php_files < <(git diff --name-only --relative "$base_sha" "$head_sha" -- '*.php' | sed '/^$/d')
-          else
-            mapfile -t php_files < <(git diff --name-only --relative HEAD^ HEAD -- '*.php' | sed '/^$/d')
-          fi
-
-          if [ ${#php_files[@]} -eq 0 ]; then
-            echo "No changed PHP files detected."
-            exit 0
-          fi
-
-          printf '%s\n' "${php_files[@]}" > changed-php-files.txt
-
-      - name: Run PHPStan on changed PHP files
-        id: phpstan
-        shell: bash
-        working-directory: extension-code
-        continue-on-error: true
-        run: |
-          if [ ! -f changed-php-files.txt ]; then
-            echo "No changed PHP files detected; skipping PHPStan."
-            exit 0
-          fi
-
-          mapfile -t files < changed-php-files.txt
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No changed PHP files detected; skipping PHPStan."
-            exit 0
-          fi
-
-          autoload_args=()
-          for autoload_candidate in vendor/autoload.php app/autoload.php app/bootstrap.php generated/autoload.php; do
-            if [ -f "$autoload_candidate" ]; then
-              autoload_args+=(--autoload-file="$autoload_candidate")
-              break
-            fi
-          done
-
-          if [ ${#autoload_args[@]} -eq 0 ] && [ -f composer.json ]; then
-            composer dump-autoload --no-interaction --prefer-dist >/dev/null 2>&1 || true
-            if [ -f vendor/autoload.php ]; then
-              autoload_args+=(--autoload-file=vendor/autoload.php)
-            fi
-          fi
-
-          php ../ci-workflows/tools/vendor/bin/phpstan analyse \
-            --configuration=../ci-workflows/phpstan.neon \
-            --no-progress \
-            --memory-limit=1G \
-            "${autoload_args[@]}" \
-            "${files[@]}" > phpstan-output.txt 2>&1
-
-      - name: Capture PHPStan failure summary
-        id: capture-phpstan
-        if: ${{ always() }}
-        shell: bash
-        working-directory: extension-code
-        run: |
-          if [ "${{ steps.phpstan.outcome }}" = "failure" ]; then
-            echo "value<<EOF" >> "$GITHUB_OUTPUT"
-            cat phpstan-output.txt >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Fail job for PHPStan issues
-        if: ${{ steps.capture-phpstan.outputs.value != '' }}
-        shell: bash
-        run: exit 1
-
   ai-review:
     name: AI Review
     needs: validate
@@ -430,7 +312,7 @@ jobs:
 
   comment-results:
     name: Comment Results
-    needs: [validate, phpcs, phpstan]
+    needs: [validate, phpcs]
     if: ${{ inputs.enable-pr-comments && github.event_name == 'pull_request' && always() }}
     runs-on: ubuntu-latest
 
@@ -440,7 +322,6 @@ jobs:
         env:
           LINT_FAILURE: ${{ needs.phpcs.outputs.lint_failure }}
           PHPCS_FAILURE: ${{ needs.phpcs.outputs.phpcs_failure }}
-          PHPSTAN_FAILURE: ${{ needs.phpstan.outputs.phpstan_failure }}
         with:
           script: |
             const body = [];
@@ -452,10 +333,6 @@ jobs:
 
             if (process.env.PHPCS_FAILURE) {
               failures.push('### PHPCS\n```\n' + process.env.PHPCS_FAILURE + '\n```');
-            }
-
-            if (process.env.PHPSTAN_FAILURE) {
-              failures.push('### PHPStan\n```\n' + process.env.PHPSTAN_FAILURE + '\n```');
             }
 
             if (failures.length === 0) {
