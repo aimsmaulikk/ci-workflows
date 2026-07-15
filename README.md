@@ -8,7 +8,7 @@ Shared CI/CD workflows for Magento 2 extensions.
 - Magento Coding Standard checks
 - PHPCS on changed PHP files only
 - PHPStan analysis with a shared configuration
-- AI review context output for pull requests
+- AI review context output for pull requests, now rendered as a structured review summary
 - Magento compatibility hooks for later expansion
 
 ## Reusable workflow
