@@ -58,6 +58,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   validate:
@@ -99,6 +101,9 @@ jobs:
     name: PHPCS
     needs: validate
     runs-on: ubuntu-latest
+    outputs:
+      lint_failure: ${{ steps.capture-lint.outputs.value }}
+      phpcs_failure: ${{ steps.capture-phpcs.outputs.value }}
 
     steps:
       - name: Checkout extension repository
@@ -155,8 +160,10 @@ jobs:
           echo "php_files_path=changed-php-files.txt" >> "$GITHUB_OUTPUT"
 
       - name: Lint changed PHP files
+        id: lint-php
         shell: bash
         working-directory: extension-code
+        continue-on-error: true
         run: |
           if [ ! -f changed-php-files.txt ]; then
             echo "No changed PHP files detected; skipping PHP lint."
@@ -171,15 +178,35 @@ jobs:
 
           for file in "${files[@]}"; do
             if [ -f "$file" ]; then
-              php -l "$file"
+              php -l "$file" >> php-lint-output.txt 2>&1
             else
-              echo "Skipping missing file: $file"
+              echo "Skipping missing file: $file" >> php-lint-output.txt
             fi
           done
 
-      - name: Run PHPCS on changed PHP files
+          if [ -s php-lint-output.txt ]; then
+            cat php-lint-output.txt
+          fi
+
+      - name: Capture lint failure summary
+        id: capture-lint
+        if: ${{ always() }}
         shell: bash
         working-directory: extension-code
+        run: |
+          if [ "${{ steps.lint-php.outcome }}" = "failure" ]; then
+            echo "value<<EOF" >> "$GITHUB_OUTPUT"
+            cat php-lint-output.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run PHPCS on changed PHP files
+        id: phpcs
+        shell: bash
+        working-directory: extension-code
+        continue-on-error: true
         run: |
           if [ ! -f changed-php-files.txt ]; then
             echo "No changed PHP files detected; skipping PHPCS."
@@ -196,13 +223,29 @@ jobs:
             --standard=../ci-workflows/phpcs.xml \
             --runtime-set ignore_warnings_on_exit 1 \
             --runtime-set ignore_errors_on_exit 1 \
-            "${files[@]}"
+            "${files[@]}" > phpcs-output.txt 2>&1
+
+      - name: Capture PHPCS failure summary
+        id: capture-phpcs
+        if: ${{ always() }}
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ "${{ steps.phpcs.outcome }}" = "failure" ]; then
+            echo "value<<EOF" >> "$GITHUB_OUTPUT"
+            cat phpcs-output.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=" >> "$GITHUB_OUTPUT"
+          fi
 
   phpstan:
     name: PHPStan
     needs: validate
     if: ${{ inputs.enable-phpstan }}
     runs-on: ubuntu-latest
+    outputs:
+      phpstan_failure: ${{ steps.capture-phpstan.outputs.value }}
 
     steps:
       - name: Checkout extension repository
@@ -257,8 +300,10 @@ jobs:
           printf '%s\n' "${php_files[@]}" > changed-php-files.txt
 
       - name: Run PHPStan on changed PHP files
+        id: phpstan
         shell: bash
         working-directory: extension-code
+        continue-on-error: true
         run: |
           if [ ! -f changed-php-files.txt ]; then
             echo "No changed PHP files detected; skipping PHPStan."
@@ -271,11 +316,41 @@ jobs:
             exit 0
           fi
 
+          autoload_args=()
+          for autoload_candidate in vendor/autoload.php app/autoload.php app/bootstrap.php generated/autoload.php; do
+            if [ -f "$autoload_candidate" ]; then
+              autoload_args+=(--autoload-file="$autoload_candidate")
+              break
+            fi
+          done
+
+          if [ ${#autoload_args[@]} -eq 0 ] && [ -f composer.json ]; then
+            composer dump-autoload --no-interaction --prefer-dist >/dev/null 2>&1 || true
+            if [ -f vendor/autoload.php ]; then
+              autoload_args+=(--autoload-file=vendor/autoload.php)
+            fi
+          fi
+
           php ../ci-workflows/tools/vendor/bin/phpstan analyse \
             --configuration=../ci-workflows/phpstan.neon \
             --no-progress \
             --memory-limit=1G \
-            "${files[@]}"
+            "${autoload_args[@]}" \
+            "${files[@]}" > phpstan-output.txt 2>&1
+
+      - name: Capture PHPStan failure summary
+        id: capture-phpstan
+        if: ${{ always() }}
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ "${{ steps.phpstan.outcome }}" = "failure" ]; then
+            echo "value<<EOF" >> "$GITHUB_OUTPUT"
+            cat phpstan-output.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=" >> "$GITHUB_OUTPUT"
+          fi
 
   ai-review:
     name: AI Review
@@ -339,6 +414,73 @@ jobs:
         shell: bash
         working-directory: extension-code
         run: php ../ci-workflows/ai/review.php
+
+  comment-results:
+    name: Comment Results
+    needs: [validate, phpcs, phpstan]
+    if: ${{ github.event_name == 'pull_request' && always() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create or update PR comment
+        uses: actions/github-script@v7
+        env:
+          LINT_FAILURE: ${{ needs.phpcs.outputs.lint_failure }}
+          PHPCS_FAILURE: ${{ needs.phpcs.outputs.phpcs_failure }}
+          PHPSTAN_FAILURE: ${{ needs.phpstan.outputs.phpstan_failure }}
+        with:
+          script: |
+            const body = [];
+            const failures = [];
+
+            if (process.env.LINT_FAILURE) {
+              failures.push('### PHP Lint\n```\n' + process.env.LINT_FAILURE + '\n```');
+            }
+
+            if (process.env.PHPCS_FAILURE) {
+              failures.push('### PHPCS\n```\n' + process.env.PHPCS_FAILURE + '\n```');
+            }
+
+            if (process.env.PHPSTAN_FAILURE) {
+              failures.push('### PHPStan\n```\n' + process.env.PHPSTAN_FAILURE + '\n```');
+            }
+
+            if (failures.length === 0) {
+              return;
+            }
+
+            body.push('## CI Quality Report');
+            body.push('');
+            body.push('The following issues were detected by the reusable quality workflow:');
+            body.push('');
+            body.push(...failures);
+
+            const marker = '<!-- ci-quality-report -->';
+            const commentBody = marker + '\n' + body.join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(comment => comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody,
+              });
+            }
 
   compatibility:
     name: Magento Compatibility
