@@ -270,8 +270,6 @@ jobs:
     needs: validate
     if: ${{ inputs.enable-ai-review }}
     runs-on: ubuntu-latest
-    outputs:
-      review_markdown: ${{ steps.render-review.outputs.value }}
 
     steps:
       - name: Checkout extension repository
@@ -345,17 +343,19 @@ jobs:
           echo "EOF" >> "$GITHUB_ENV"
 
       - name: Generate AI review markdown
-        id: render-review
         shell: bash
         working-directory: extension-code
         run: |
           php ../ci-workflows/ai/review.php > ai-review.md
           echo "Review markdown generated."
           cat ai-review.md
-          delim="REVIEW_OUTPUT_$(date +%s)_$RANDOM"
-          printf 'value<<%s\n' "$delim" >> "$GITHUB_OUTPUT"
-          cat ai-review.md >> "$GITHUB_OUTPUT"
-          printf '%s\n' "$delim" >> "$GITHUB_OUTPUT"
+
+      - name: Upload AI review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-review
+          path: extension-code/ai-review.md
+          if-no-files-found: error
 
   comment-results:
     name: Comment Results
@@ -364,14 +364,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Download AI review artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-review
+          path: ai-review
+
       - name: Create or update PR comment
         uses: actions/github-script@v7
         env:
           LINT_FAILURE: ${{ needs.phpcs.outputs.lint_failure }}
           PHPCS_FAILURE: ${{ needs.phpcs.outputs.phpcs_failure }}
-          AI_REVIEW_MARKDOWN: ${{ needs.ai-review.outputs.review_markdown }}
         with:
           script: |
+            const fs = require('fs');
+            const path = require('path');
             const body = [];
             const failures = [];
             const sections = [];
@@ -393,8 +400,12 @@ jobs:
               sections.push(body.join('\n'));
             }
 
-            if (process.env.AI_REVIEW_MARKDOWN) {
-              sections.push('## AI Review\n\n' + process.env.AI_REVIEW_MARKDOWN);
+            const reviewPath = path.join(process.cwd(), 'ai-review', 'ai-review.md');
+            if (fs.existsSync(reviewPath)) {
+              const reviewMarkdown = fs.readFileSync(reviewPath, 'utf8').trim();
+              if (reviewMarkdown) {
+                sections.push('## AI Review\n\n' + reviewMarkdown);
+              }
             }
 
             if (sections.length === 0) {
