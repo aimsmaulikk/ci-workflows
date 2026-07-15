@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: false
+      enable-pr-comments:
+        description: Post quality findings as a PR comment
+        required: false
+        type: boolean
+        default: false
       ci-workflows-repository:
         description: Repository that hosts the shared CI config files. Provide this from the caller workflow when using a different central repo.
         required: false
@@ -58,8 +63,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
 
 jobs:
   validate:
@@ -418,7 +421,7 @@ jobs:
   comment-results:
     name: Comment Results
     needs: [validate, phpcs, phpstan]
-    if: ${{ github.event_name == 'pull_request' && always() }}
+    if: ${{ inputs.enable-pr-comments && github.event_name == 'pull_request' && always() }}
     runs-on: ubuntu-latest
 
     steps:
