@@ -1,0 +1,332 @@
+name: Magento Extension Quality
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: PHP version used for validation and static analysis
+        required: false
+        type: string
+        default: "8.3"
+      enable-phpstan:
+        description: Run PHPStan analysis
+        required: false
+        type: boolean
+        default: true
+      enable-ai-review:
+        description: Run the AI review job
+        required: false
+        type: boolean
+        default: false
+      enable-magento-compile:
+        description: Run Magento compatibility and compile checks
+        required: false
+        type: boolean
+        default: false
+      ci-workflows-repository:
+        description: Repository that hosts the shared CI config files
+        required: false
+        type: string
+        default: "aimsinfosoft/ci-workflows"
+      ci-workflows-ref:
+        description: Ref to use when checking out the shared CI config repository
+        required: false
+        type: string
+        default: "main"
+  workflow_dispatch:
+    inputs:
+      php-version:
+        description: PHP version used for validation and static analysis
+        required: false
+        type: string
+        default: "8.3"
+      enable-phpstan:
+        description: Run PHPStan analysis
+        required: false
+        type: boolean
+        default: true
+      enable-ai-review:
+        description: Run the AI review job
+        required: false
+        type: boolean
+        default: false
+      enable-magento-compile:
+        description: Run Magento compatibility and compile checks
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout extension repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: extension-code
+
+      - name: Checkout shared CI configuration
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.ci-workflows-repository }}
+          ref: ${{ inputs.ci-workflows-ref }}
+          path: ci-workflows
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer
+          coverage: none
+
+      - name: Validate composer.json
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ -f composer.json ]; then
+            composer validate --no-check-publish
+          else
+            echo "No composer.json found in the extension repository. Skipping validation."
+          fi
+
+  phpcs:
+    name: PHPCS
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout extension repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: extension-code
+
+      - name: Checkout shared CI configuration
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.ci-workflows-repository }}
+          ref: ${{ inputs.ci-workflows-ref }}
+          path: ci-workflows
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer
+          coverage: none
+
+      - name: Install QA tools
+        shell: bash
+        working-directory: ci-workflows/tools
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Detect changed PHP files
+        id: changed-php-files
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+            head_sha="${{ github.sha }}"
+          fi
+
+          if [ -n "$base_sha" ] && [ -n "$head_sha" ] && [ "$base_sha" != "$head_sha" ]; then
+            mapfile -t php_files < <(git diff --name-only --relative "$base_sha" "$head_sha" -- '*.php' | sed '/^$/d')
+          else
+            mapfile -t php_files < <(git diff --name-only --relative HEAD^ HEAD -- '*.php' | sed '/^$/d')
+          fi
+
+          if [ ${#php_files[@]} -eq 0 ]; then
+            echo "No changed PHP files detected."
+            echo "php_files_path=changed-php-files.txt" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf '%s\n' "${php_files[@]}" > changed-php-files.txt
+          echo "php_files_path=changed-php-files.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Run PHPCS on changed PHP files
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ ! -f changed-php-files.txt ]; then
+            echo "No changed PHP files detected; skipping PHPCS."
+            exit 0
+          fi
+
+          mapfile -t files < changed-php-files.txt
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No changed PHP files detected; skipping PHPCS."
+            exit 0
+          fi
+
+          php ../ci-workflows/tools/vendor/bin/phpcs \
+            --standard=../ci-workflows/phpcs.xml \
+            --runtime-set ignore_warnings_on_exit 1 \
+            --runtime-set ignore_errors_on_exit 1 \
+            "${files[@]}"
+
+  phpstan:
+    name: PHPStan
+    needs: validate
+    if: ${{ inputs.enable-phpstan }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout extension repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: extension-code
+
+      - name: Checkout shared CI configuration
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.ci-workflows-repository }}
+          ref: ${{ inputs.ci-workflows-ref }}
+          path: ci-workflows
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer
+          coverage: none
+
+      - name: Install QA tools
+        shell: bash
+        working-directory: ci-workflows/tools
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Detect changed PHP files
+        id: changed-php-files
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+            head_sha="${{ github.sha }}"
+          fi
+
+          if [ -n "$base_sha" ] && [ -n "$head_sha" ] && [ "$base_sha" != "$head_sha" ]; then
+            mapfile -t php_files < <(git diff --name-only --relative "$base_sha" "$head_sha" -- '*.php' | sed '/^$/d')
+          else
+            mapfile -t php_files < <(git diff --name-only --relative HEAD^ HEAD -- '*.php' | sed '/^$/d')
+          fi
+
+          if [ ${#php_files[@]} -eq 0 ]; then
+            echo "No changed PHP files detected."
+            exit 0
+          fi
+
+          printf '%s\n' "${php_files[@]}" > changed-php-files.txt
+
+      - name: Run PHPStan on changed PHP files
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ ! -f changed-php-files.txt ]; then
+            echo "No changed PHP files detected; skipping PHPStan."
+            exit 0
+          fi
+
+          mapfile -t files < changed-php-files.txt
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No changed PHP files detected; skipping PHPStan."
+            exit 0
+          fi
+
+          php ../ci-workflows/tools/vendor/bin/phpstan analyse \
+            --configuration=../ci-workflows/phpstan.neon \
+            --no-progress \
+            --memory-limit=1G \
+            "${files[@]}"
+
+  ai-review:
+    name: AI Review
+    needs: validate
+    if: ${{ inputs.enable-ai-review }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout extension repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: extension-code
+
+      - name: Checkout shared CI configuration
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.ci-workflows-repository }}
+          ref: ${{ inputs.ci-workflows-ref }}
+          path: ci-workflows
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer
+          coverage: none
+
+      - name: Prepare review context
+        shell: bash
+        working-directory: extension-code
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+            head_sha="${{ github.sha }}"
+          fi
+
+          if [ -n "$base_sha" ] && [ -n "$head_sha" ] && [ "$base_sha" != "$head_sha" ]; then
+            git diff --name-only --relative "$base_sha" "$head_sha" > changed-files.txt
+            git diff --stat "$base_sha" "$head_sha" > git-diff.txt
+          else
+            echo "No diff available." > changed-files.txt
+            echo "No diff available." > git-diff.txt
+          fi
+
+          echo "PR_TITLE=${{ github.event.pull_request.title || 'Manual run' }}" >> "$GITHUB_ENV"
+          echo "PR_DESCRIPTION<<EOF" >> "$GITHUB_ENV"
+          echo "${{ github.event.pull_request.body || 'No description provided.' }}" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+          echo "CHANGED_FILES<<EOF" >> "$GITHUB_ENV"
+          cat changed-files.txt >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+          echo "GIT_DIFF<<EOF" >> "$GITHUB_ENV"
+          cat git-diff.txt >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Print AI review
+        shell: bash
+        working-directory: extension-code
+        run: php ../ci-workflows/ai/review.php
+
+  compatibility:
+    name: Magento Compatibility
+    needs: validate
+    if: ${{ inputs.enable-magento-compile }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Placeholder compatibility check
+        shell: bash
+        run: |
+          echo "Magento compatibility checks are not implemented yet."
+          echo "This job will be expanded later to create a temporary Magento installation, install the extension, and run setup:upgrade/compile smoke tests."
