@@ -27,6 +27,8 @@ on:
 
 jobs:
   quality:
+    permissions:
+      contents: read
     uses: aimsinfosoft/ci-workflows/.github/workflows/quality-gate.yml@v1.0.0
     with:
       php-version: "8.3"
