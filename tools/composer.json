@@ -1,0 +1,15 @@
+{
+    "name": "aimsinfosoft/quality-tools",
+    "description": "Shared QA tools",
+    "require": {},
+    "require-dev": {
+        "squizlabs/php_codesniffer": "^3.13",
+        "magento/magento-coding-standard": "^40",
+        "phpstan/phpstan": "^2.2"
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    }
+}
